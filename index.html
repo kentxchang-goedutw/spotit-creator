@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自訂 Spot It! (哆寶) 圖卡生成器 - 專業調校版</title>
+    <!-- 引入 React, ReactDOM, Babel, Tailwind CSS -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style id="main-styles">
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+        body { background-color: #f1f5f9; font-family: system-ui, -apple-system, sans-serif; }
+
+        .symbol-item {
+            position: absolute;
+            transform-origin: center center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+        }
+
+        /* 圖卡基礎樣式 */
+        .spot-card { 
+            position: relative;
+            background: white !important;
+            box-sizing: border-box;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .spot-card.shape-circle {
+            border-radius: 50% !important;
+            border: 1px dashed #ccc !important;
+        }
+
+        .spot-card.shape-rect {
+            border-radius: 0 !important;
+            border-bottom: 1px solid #eee;
+        }
+        .spot-card.shape-rect:last-child { border-bottom: none; }
+
+        .virtual-page-a4 {
+            width: 150mm; 
+            height: 212.2mm;
+            background: white;
+            margin: 0 auto 30px auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-around;
+            padding: 10mm 0;
+            position: relative;
+            border: 1px solid #e2e8f0;
+        }
+
+        .virtual-page-rect {
+            width: 150mm; 
+            height: 212.2mm; 
+            background: white;
+            margin: 0 auto 30px auto;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            border: 1px solid #e2e8f0;
+        }
+
+        .print-footer-tag {
+            position: absolute;
+            bottom: 8mm;
+            right: 10mm;
+            font-size: 9px;
+            color: #d1d5db;
+            font-weight: 500;
+            pointer-events: none;
+        }
+
+        @media print {
+            body { background: white !important; margin: 0; padding: 0; }
+            .no-print { display: none !important; }
+            .print-area { display: block !important; }
+
+            .print-page {
+                width: 210mm;
+                height: 297mm;
+                display: flex;
+                flex-direction: column;
+                page-break-after: always;
+                box-sizing: border-box;
+                padding: 0;
+                position: relative;
+            }
+
+            .print-page.mode-circle {
+                align-items: center;
+                justify-content: space-around;
+            }
+            .print-page.mode-circle .spot-card {
+                width: 120mm !important; 
+                height: 120mm !important;
+            }
+
+            .print-page.mode-rect {
+                align-items: stretch;
+                justify-content: flex-start;
+            }
+            .print-page.mode-rect .spot-card {
+                width: 210mm !important; 
+                height: 148.5mm !important; 
+                border-bottom: 1px dashed #ddd; 
+            }
+
+            @page { margin: 0; size: A4 portrait; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+
+        const DEFAULT_EMOJIS = [
+            "🍎","🐶","🚗","⭐","⚽","🎈","🌻","🍔","🦋","🎸","🚀","🍕","🐱","📚","🎩","🚲","🐘","🌈","👑","🍓",
+            "👻","🎃","💎","🎁","🔔","🐼","🐬","🐢","🦄","🍩","☕","☂️","✂️","🔑","🔒","🌞","🌙","☁️","⛄","🔥",
+            "💧","🍀","🍁","🍄","🌵","🌲","🐟","🐸","🦉","🐞","🐝","🐌","🐧","🐷","🐰","🐻"," foxes"
+        ];
+
+        const getSlots = (count) => {
+            if (count === 3) return [ {x:50, y:28, s:1.8}, {x:22, y:68, s:1.8}, {x:78, y:68, s:1.8} ];
+            if (count === 4) return [ {x:50, y:50, s:1.6}, {x:50, y:18, s:1.4}, {x:18, y:75, s:1.4}, {x:82, y:75, s:1.4} ];
+            if (count === 6) return [ {x:32, y:45, s:1.3}, {x:68, y:45, s:1.3}, {x:50, y:15, s:1.1}, {x:50, y:85, s:1.1}, {x:12, y:70, s:1.1}, {x:88, y:70, s:1.1} ];
+            return [ 
+                {x: 50, y: 50, s: 1.3}, {x: 50, y: 15, s: 0.9}, {x: 82, y: 28, s: 0.9}, {x: 88, y: 62, s: 0.9},
+                {x: 65, y: 88, s: 0.9}, {x: 35, y: 88, s: 0.9}, {x: 12, y: 62, s: 0.9}, {x: 18, y: 28, s: 0.9}
+            ];
+        };
+
+        const generateMathDeck = (n) => {
+            let cards = [];
+            let firstCard = [];
+            for (let i = 1; i <= n + 1; i++) firstCard.push(i);
+            cards.push(firstCard);
+            for (let j = 1; j <= n; j++) {
+                let card = [1];
+                for (let k = 1; k <= n; k++) card.push(n + 1 + n * (j - 1) + k);
+                cards.push(card);
+            }
+            for (let i = 1; i <= n; i++) {
+                for (let j = 1; j <= n; j++) {
+                    let card = [i + 1];
+                    for (let k = 1; k <= n; k++) {
+                        let val = n + 1 + n * (k - 1) + (((i - 1) * (k - 1) + (j - 1)) % n) + 1;
+                        card.push(val);
+                    }
+                    cards.push(card);
+                }
+            }
+            return cards;
+        };
+
+        const App = () => {
+            const [mode, setMode] = useState(7); 
+            const [contentType, setContentType] = useState('image');
+            const [printLayout, setPrintLayout] = useState('A4_Circle'); 
+            const [textInput, setTextInput] = useState("");
+            const [imagePool, setImagePool] = useState([]);
+            const [deck, setDeck] = useState([]);
+            const [imageScale, setImageScale] = useState(1.0);
+            const [textScale, setTextScale] = useState(1.0);
+            const [centerOffset, setCenterOffset] = useState(1.0);
+            const fileInputRef = useRef(null);
+            const printAreaRef = useRef(null);
+
+            const totalNeeded = useMemo(() => mode * mode + mode + 1, [mode]);
+
+            const symbols = useMemo(() => {
+                let pool = [];
+                if (contentType === 'image') {
+                    pool = [...imagePool];
+                } else {
+                    pool = textInput.split('\n').filter(t => t.trim() !== '').map(t => {
+                        let rawText = t.trim();
+                        const parenthesisRegex = /(.*?)\((.*?)\)(.*)/;
+                        const match = rawText.match(parenthesisRegex);
+                        let finalContent = rawText;
+                        if (match) {
+                            const before = match[1].trim().replace(/ /g, '\u00A0');
+                            const after = match[3].trim().replace(/ /g, '\u00A0');
+                            const inside = match[2].trim().replace(/ /g, '\u00A0');
+                            const mainPart = (before + (after ? '\u00A0' + after : '')).trim();
+                            finalContent = `${mainPart}\n(${inside})`;
+                        } else {
+                            finalContent = rawText.replace(/ /g, '\u00A0');
+                        }
+                        return { type: 'text', content: finalContent };
+                    });
+                }
+                const finalPool = [...pool];
+                for (let i = 0; finalPool.length < totalNeeded; i++) {
+                    finalPool.push({ type: 'text', content: DEFAULT_EMOJIS[i % DEFAULT_EMOJIS.length], isDefault: true });
+                }
+                return finalPool.slice(0, totalNeeded);
+            }, [contentType, textInput, imagePool, totalNeeded]);
+
+            useEffect(() => {
+                const mathDeck = generateMathDeck(mode);
+                const baseSlots = getSlots(mode + 1);
+                const visualDeck = mathDeck.map(indices => {
+                    let cardSymbols = indices.map(idx => symbols[idx - 1]);
+                    cardSymbols = [...cardSymbols].sort(() => Math.random() - 0.5);
+                    return cardSymbols.map((sym, i) => {
+                        const slot = baseSlots[i];
+                        const vx = slot.x - 50;
+                        const vy = slot.y - 50;
+                        const scaleFactor = sym.type === 'image' ? imageScale : textScale;
+                        return {
+                            ...sym,
+                            id: indices[i],
+                            x: 50 + vx * centerOffset,
+                            y: 50 + vy * centerOffset,
+                            rotation: Math.random() * 360,
+                            randomScale: slot.s * (0.8 + Math.random() * 0.4) * scaleFactor,
+                            randomOffsetX: (Math.random() * 4 - 2),
+                            randomOffsetY: (Math.random() * 4 - 2),
+                            color: `hsl(${(indices[i] * 40) % 360}, 65%, 45%)`
+                        };
+                    });
+                });
+                setDeck(visualDeck);
+            }, [symbols, mode, imageScale, textScale, centerOffset]);
+
+            const handleBatchUpload = (e) => {
+                const files = Array.from(e.target.files);
+                const promises = files.map(file => new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (ev) => resolve({ type: 'image', content: ev.target.result });
+                    reader.readAsDataURL(file);
+                }));
+                Promise.all(promises).then(newImages => {
+                    setImagePool(prev => [...prev, ...newImages]);
+                });
+            };
+
+            const chunkDeck = (arr, size) => {
+                return arr.reduce((acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
+            };
+            const paginatedDeck = useMemo(() => chunkDeck(deck, 2), [deck]);
+
+            const openPreviewWindow = () => {
+                const styles = document.getElementById('main-styles').innerHTML;
+                const printContent = printAreaRef.current.innerHTML;
+                const previewWin = window.open('', '_blank');
+                const isRect = printLayout === 'A5_Rect';
+
+                // 備援圖源
+                const ccIconUrl = "https://i.creativecommons.org/l/by-nc-sa/4.0/88x31.png";
+
+                previewWin.document.write(`
+                    <html>
+                        <head>
+                            <meta charset="UTF-8">
+                            <title>Spot It! 圖卡預覽 - 阿剛老師</title>
+                            <script src="https://cdn.tailwindcss.com"><\/script>
+                            <style>
+                                ${styles}
+                                body { background: #f8fafc; }
+                                .preview-header { 
+                                    background: #1e293b; color: white; padding: 20px; 
+                                    text-align: center; position: sticky; top: 0; z-index: 100;
+                                }
+                                .print-page { 
+                                    background: white; margin: 20px auto; 
+                                    box-shadow: 0 10px 25px rgba(0,0,0,0.1); 
+                                }
+                                @media print {
+                                    .preview-header { display: none !important; }
+                                    .print-page { margin: 0; box-shadow: none; border: none; }
+                                    body { background: white; }
+                                    @page { margin: 0; size: A4 portrait; }
+                                }
+                                .print-page { width: 210mm; }
+                                ${isRect ? '.spot-card { border: 1px dashed #ddd !important; height: 148.5mm !important; }' : ''}
+                            </style>
+                        </head>
+                        <body>
+                            <div class="preview-header no-print">
+                                <h1 class="text-xl font-bold">Spot It! 列印預覽模式 (${isRect ? 'A5 矩形滿版' : 'A4 圓形圖卡'})</h1>
+                                <p class="text-sm opacity-70 mt-1">建議使用「另存為 PDF」，並確認「邊距：無」與「背景圖形：勾選」</p>
+                                <div class="mt-4 flex justify-center gap-3">
+                                    <button onclick="window.print()" class="bg-emerald-500 hover:bg-emerald-600 px-6 py-2 rounded-lg font-bold shadow-lg transition-all text-emerald-950 text-sm">立即列印 / 存為 PDF</button>
+                                    <button onclick="window.close()" class="bg-slate-700 hover:bg-slate-800 px-6 py-2 rounded-lg font-bold transition-all text-sm">關閉預覽</button>
+                                </div>
+                            </div>
+                            <div class="print-area">
+                                ${printContent}
+                            </div>
+                            <footer class="no-print p-6 text-center text-slate-400 bg-slate-900 flex items-center justify-center gap-4">
+                                <span class="font-bold text-sm">Made by 阿剛老師</span>
+                                <img src="${ccIconUrl}" class="h-6" alt="CC BY-NC-SA" />
+                                <span class="text-xs">CC BY-NC-SA 4.0</span>
+                            </footer>
+                        </body>
+                    </html>
+                `);
+                previewWin.document.close();
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    <header className="bg-indigo-700 text-white p-6 shadow-xl no-print">
+                        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+                            <div>
+                                <h1 className="text-3xl font-black tracking-tighter">SPOT IT! 專業生成器</h1>
+                                <p className="text-indigo-200 opacity-90 mt-1 text-sm font-medium">支援 A4 圓形 / A5 矩形 | 穩定授權版</p>
+                            </div>
+                            <div className="flex gap-3">
+                                <button onClick={openPreviewWindow} className="bg-white/10 hover:bg-white/20 px-6 py-2.5 rounded-xl font-bold border border-white/30 transition-all flex items-center gap-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>
+                                    新視窗預覽與列印
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="flex-grow max-w-7xl mx-auto w-full p-4 md:p-8 flex flex-col lg:flex-row gap-8">
+                        <aside className="w-full lg:w-96 space-y-5 no-print">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                <label className="block text-slate-800 font-bold mb-3">0. 內容模式</label>
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                    <button onClick={() => setContentType('image')} className={`flex-1 py-2 px-4 rounded-lg font-bold transition-all ${contentType === 'image' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>圖片</button>
+                                    <button onClick={() => setContentType('text')} className={`flex-1 py-2 px-4 rounded-lg font-bold transition-all ${contentType === 'text' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>文字</button>
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                <label className="block text-slate-800 font-bold mb-3 flex items-center gap-2">
+                                    <span className="bg-indigo-100 text-indigo-600 w-6 h-6 rounded-full flex items-center justify-center text-xs">A</span>
+                                    列印版面選擇
+                                </label>
+                                <select value={printLayout} onChange={(e) => setPrintLayout(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-semibold text-slate-700">
+                                    <option value="A4_Circle">A4 圓形裁切 (一頁 2 入)</option>
+                                    <option value="A5_Rect">A5 矩形滿版 (對半切割)</option>
+                                </select>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                                <label className="block text-slate-800 font-bold mb-3 flex items-center gap-2">
+                                    <span className="bg-indigo-100 text-indigo-600 w-6 h-6 rounded-full flex items-center justify-center text-xs">1</span>
+                                    難度設定
+                                </label>
+                                <select value={mode} onChange={(e) => setMode(Number(e.target.value))} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-semibold text-slate-700">
+                                    <option value={2}>入門版 (3圖/張，共 7 張)</option>
+                                    <option value={3}>迷你版 (4圖/張，共 13 張)</option>
+                                    <option value={5}>進階版 (6圖/張，共 31 張)</option>
+                                    <option value={7}>標準版 (8圖/張，共 57 張)</option>
+                                </select>
+                            </div>
+
+                            <div className="bg-indigo-50 p-6 rounded-2xl shadow-sm border border-indigo-100 space-y-4">
+                                <label className="block text-indigo-900 font-bold mb-1 flex items-center gap-2"><span className="bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs">2</span>拉桿調校</label>
+                                {contentType === 'image' ? (
+                                    <div>
+                                        <div className="flex justify-between text-xs font-bold text-indigo-700 mb-1"><span>圖片縮放</span><span>{Math.round(imageScale * 100)}%</span></div>
+                                        <input type="range" min="0.5" max="2.0" step="0.05" value={imageScale} onChange={(e) => setImageScale(parseFloat(e.target.value))} className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"/>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <div className="flex justify-between text-xs font-bold text-indigo-700 mb-1"><span>文字縮放</span><span>{Math.round(textScale * 100)}%</span></div>
+                                        <input type="range" min="0.5" max="2.0" step="0.05" value={textScale} onChange={(e) => setTextScale(parseFloat(e.target.value))} className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"/>
+                                    </div>
+                                )}
+                                <div>
+                                    <div className="flex justify-between text-xs font-bold text-indigo-700 mb-1"><span>中心聚集度</span><span>{Math.round(centerOffset * 100)}%</span></div>
+                                    <input type="range" min="0.1" max="1.5" step="0.05" value={centerOffset} onChange={(e) => setCenterOffset(parseFloat(e.target.value))} className="w-full h-2 bg-indigo-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"/>
+                                </div>
+                            </div>
+
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
+                                {contentType === 'image' ? (
+                                    <div>
+                                        <div className="flex justify-between items-center mb-3"><label className="text-slate-800 font-bold">3. 圖片池</label><button onClick={() => setImagePool([])} className="text-xs text-red-500 font-bold">清空</button></div>
+                                        <div onClick={() => fileInputRef.current.click()} className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-all group">
+                                            <input type="file" multiple accept="image/*" ref={fileInputRef} onChange={handleBatchUpload} className="hidden" />
+                                            <div className="text-3xl mb-1 group-hover:scale-110 transition-transform">📁</div>
+                                            <p className="text-sm font-bold text-slate-600">批次上傳圖片</p>
+                                            <p className="text-[10px] text-slate-400 mt-1">已選 {imagePool.length} 個檔案</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div>
+                                        <label className="block text-slate-800 font-bold mb-1">3. 文字池 (每一行一個)</label>
+                                        <p className="text-[10px] text-slate-400 mb-2 italic">提示：使用 Apple (蘋果) 可換行</p>
+                                        <textarea value={textInput} onChange={(e) => setTextInput(e.target.value)} placeholder="每一行輸入一個單字..." className="w-full h-32 p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 text-sm font-medium" />
+                                    </div>
+                                )}
+                            </div>
+                        </aside>
+
+                        <section className="flex-grow no-print bg-slate-200/50 p-6 rounded-3xl border border-slate-200 overflow-y-auto max-h-[85vh]">
+                            <h2 className="text-xl font-black text-slate-800 mb-8 flex items-center gap-3 sticky top-0 bg-slate-50/80 backdrop-blur py-2 z-10 rounded-lg px-4">
+                                <div className="w-1.5 h-7 bg-indigo-600 rounded-full"></div>
+                                即時排版預覽
+                                <span className="text-sm font-normal text-slate-400">目前共計 {deck.length} 張卡片 ({paginatedDeck.length} 頁 A4)</span>
+                            </h2>
+                            <div className="flex flex-col items-center">
+                                {paginatedDeck.map((page, pIdx) => (
+                                    <div key={pIdx} className={printLayout === 'A4_Circle' ? 'virtual-page-a4' : 'virtual-page-rect'}>
+                                        <span className="absolute top-2 right-4 text-[10px] text-slate-300 font-mono">VIRTUAL PAGE {pIdx + 1}</span>
+                                        {page.map((card, cIdx) => (
+                                            <CardComponent 
+                                                key={cIdx} 
+                                                card={card} 
+                                                size={printLayout === 'A4_Circle' ? "w-48 h-48 md:w-56 md:h-56 lg:w-64 lg:h-64" : "w-full flex-1"} 
+                                                isCircle={printLayout === 'A4_Circle'} 
+                                            />
+                                        ))}
+                                        <div className="print-footer-tag">Made by 阿剛老師</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+
+                        <div ref={printAreaRef} className="print-area hidden">
+                            {paginatedDeck.map((page, pIdx) => (
+                                <div key={pIdx} className={`print-page ${printLayout === 'A4_Circle' ? 'mode-circle' : 'mode-rect'}`}>
+                                    {page.map((card, cIdx) => (
+                                        <CardComponent key={cIdx} card={card} isPrint isCircle={printLayout === 'A4_Circle'} />
+                                    ))}
+                                    <div className="print-footer-tag">Made by 阿剛老師</div>
+                                </div>
+                            ))}
+                        </div>
+                    </main>
+
+                    <footer className="bg-slate-900 text-white py-4 px-6 text-center no-print mt-4 border-t border-slate-800">
+                        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+                            <p className="text-lg font-bold tracking-tight">
+                                Made by <a href="https://kentxchang.blogspot.tw" target="_blank" className="text-indigo-400 hover:text-indigo-300 underline underline-offset-4">阿剛老師</a>
+                            </p>
+                            <div className="flex items-center gap-3">
+                                <img 
+                                    src="https://i.creativecommons.org/l/by-nc-sa/4.0/88x31.png" 
+                                    alt="CC BY-NC-SA" 
+                                    className="h-6"
+                                    onError={(e) => { e.target.style.display='none'; }} 
+                                />
+                                <p className="text-xs text-slate-400">
+                                    採 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh_TW" target="_blank" className="hover:text-indigo-300 underline">CC BY-NC-SA 4.0 授權</a>
+                                </p>
+                            </div>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const CardComponent = ({ card, size, isPrint, isCircle }) => (
+            <div 
+                className={`spot-card ${isCircle ? 'shape-circle' : 'shape-rect'} relative flex-shrink-0 transition-all ${!isPrint ? size : ''}`}
+                style={isPrint && isCircle ? { width: '120mm', height: '120mm' } : {}}
+            >
+                {card.map((sym, i) => (
+                    <div 
+                        key={i}
+                        className="symbol-item"
+                        style={{
+                            top: `${sym.y + sym.randomOffsetX}%`,
+                            left: `${sym.x + sym.randomOffsetY}%`,
+                            transform: `translate(-50%, -50%) rotate(${sym.rotation}deg) scale(${sym.randomScale})`,
+                            width: '28%', height: '28%'
+                        }}
+                    >
+                        {sym.type === 'image' ? (
+                            <img src={sym.content} className="max-w-full max-h-full object-contain" />
+                        ) : (
+                            <span className="font-black text-2xl md:text-3xl text-center leading-[1.2] drop-shadow-sm whitespace-pre" style={{ color: sym.isDefault ? '#e2e8f0' : sym.color }}>
+                                {sym.content}
+                            </span>
+                        )}
+                    </div>
+                ))}
+            </div>
+        );
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
